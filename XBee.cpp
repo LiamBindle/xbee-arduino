@@ -19,13 +19,9 @@
 
 #include "XBee.h"
 
-#if defined(ARDUINO) && ARDUINO >= 100
-	#include "Arduino.h"
-#else
-	#include "WProgram.h"
+#ifndef HAL_sysms
+	#error "XBee requires a system clock time in milliseconds. Please #define HAL_sysms()"
 #endif
-
-#include "HardwareSerial.h"
 
 XBeeResponse::XBeeResponse() {
 
@@ -791,12 +787,8 @@ XBee::XBee(): _response(XBeeResponse()) {
 
         _response.init();
         _response.setFrameData(_responseFrameData);
-		// Contributed by Paul Stoffregen for Teensy support
-#if defined(__AVR_ATmega32U4__) || (defined(TEENSYDUINO) && (defined(KINETISK) || defined(KINETISL)))
-        _serial = &Serial1;
-#else
-        _serial = &Serial;
-#endif
+
+		_stream = NULL;
 }
 
 uint8_t XBee::getNextFrameId() {
@@ -812,24 +804,27 @@ uint8_t XBee::getNextFrameId() {
 }
 
 // Support for SoftwareSerial. Contributed by Paul Stoffregen
-void XBee::begin(Stream &serial) {
-	_serial = &serial;
+void XBee::begin(uio::iostream& stream) {
+	_stream = &stream;
 }
 
-void XBee::setSerial(Stream &serial) {
-	_serial = &serial;
+void XBee::setSerial(uio::iostream& stream) {
+	_stream = &stream;
 }
 
 bool XBee::available() {
-	return _serial->available();
+	return _stream->gcount() != 0;
 }
 
 uint8_t XBee::read() {
-	return _serial->read();
+	char v;
+	_stream->get(&v);
+	return static_cast<uint8_t>(v);
 }
 
 void XBee::write(uint8_t val) {
-	_serial->write(val);
+	_stream->put(static_cast<char>(val));
+	_stream->flush();
 }
 
 XBeeResponse& XBee::getResponse() {
@@ -860,9 +855,9 @@ bool XBee::readPacket(int timeout) {
 		return false;
 	}
 
-	unsigned long start = millis();
+	unsigned long start = HAL_sysms();
 
-    while (int((millis() - start)) < timeout) {
+    while (int((HAL_sysms() - start)) < timeout) {
 
      	readPacket();
 
@@ -1638,7 +1633,7 @@ uint8_t XBeeWithCallbacks::matchStatus(uint8_t frameId) {
 }
 
 uint8_t XBeeWithCallbacks::waitForInternal(uint8_t apiId, void *response, uint16_t timeout, void *func, uintptr_t data, int16_t frameId) {
-	unsigned long start = millis();
+	unsigned long start = HAL_sysms();
 	do {
 		// Wait for a packet of the right type
 		if (loopTop()) {
@@ -1764,12 +1759,12 @@ uint8_t XBeeWithCallbacks::waitForInternal(uint8_t apiId, void *response, uint16
 			// Call regular callbacks
 			loopBottom();
 		}
-	} while (millis() - start < timeout);
+	} while (HAL_sysms() - start < timeout);
 	return XBEE_WAIT_TIMEOUT;
 }
 
 uint8_t XBeeWithCallbacks::waitForStatus(uint8_t frameId, uint16_t timeout) {
-	unsigned long start = millis();
+	unsigned long start = HAL_sysms();
 	do {
 		if (loopTop()) {
 			uint8_t status = matchStatus(frameId);
@@ -1779,7 +1774,7 @@ uint8_t XBeeWithCallbacks::waitForStatus(uint8_t frameId, uint16_t timeout) {
 			// Call regular callbacks
 			loopBottom();
 		}
-	} while (millis() - start < timeout);
+	} while (HAL_sysms() - start < timeout);
 	return XBEE_WAIT_TIMEOUT ;
 }
 

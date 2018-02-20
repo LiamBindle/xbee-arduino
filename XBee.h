@@ -20,11 +20,7 @@
 #ifndef XBee_h
 #define XBee_h
 
-#if defined(ARDUINO) && ARDUINO >= 100
-	#include "Arduino.h"
-#else
-	#include "WProgram.h"
-#endif
+#include <uio.hpp>
 
 #include <inttypes.h>
 
@@ -789,7 +785,7 @@ public:
 	/**
 	 * Starts the serial connection on the specified serial port
 	 */
-	void begin(Stream &serial);
+	void begin(uio::iostream &stream);
 	void getResponse(XBeeResponse &response);
 	/**
 	 * Returns a reference to the current response
@@ -808,7 +804,7 @@ public:
 	/**
 	 * Specify the serial port.  Only relevant for Arduinos that support multiple serial ports (e.g. Mega)
 	 */
-	void setSerial(Stream &serial);
+	void setSerial(uio::iostream &stream);
 private:
 	bool available();
 	uint8_t read();
@@ -826,7 +822,7 @@ private:
 	uint8_t _nextFrameId;
 	// buffer for incoming RX packets.  holds only the api specific frame data, starting after the api id byte and prior to checksum
 	uint8_t _responseFrameData[MAX_FRAME_DATA_SIZE];
-	Stream* _serial;
+	uio::iostream* _stream;
 };
 
 
@@ -1341,5 +1337,39 @@ private:
 };
 
 
+class XBeeIO : public uio::ostream {
+public:
+  void init(uio::iostream& stream, uint32_t msb, uint32_t lsb, int timeout=100) {
+    _xbee.setSerial(stream);
+    _address.setMsb(msb);
+    _address.setMsb(lsb);
+    _timeout = timeout;
+    _obuf.setbuf(_omem, 100);
+  }
+
+  virtual uio::ostream& flush() override {
+    ZBTxRequest tx(_address, (uint8_t *) _obuf.dump(), _obuf.size());
+    ZBTxStatusResponse tx_status;
+    _xbee.send(tx);
+
+    if (_xbee.readPacket(_timeout)) {
+      if (_xbee.getResponse().getApiId() == ZB_TX_STATUS_RESPONSE) {
+        _xbee.getResponse().getZBTxStatusResponse(tx_status);
+        if (tx_status.getDeliveryStatus() != SUCCESS) {
+          _oerror._flags.reserved = 0x1;
+        }
+      }
+    } else {
+      _oerror._flags.reserved = 0x1;
+    }
+    return *this;
+  }
+
+private:
+  char _omem[100];
+  XBeeAddress64 _address;
+  int _timeout;
+  XBee _xbee;
+};
 
 #endif //XBee_h
