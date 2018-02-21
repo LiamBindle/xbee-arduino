@@ -813,7 +813,7 @@ void XBee::setSerial(uio::iostream& stream) {
 }
 
 bool XBee::available() {
-	return _stream->gcount() != 0;
+	return _stream->sync().gcount() != 0;
 }
 
 uint8_t XBee::read() {
@@ -1778,3 +1778,79 @@ uint8_t XBeeWithCallbacks::waitForStatus(uint8_t frameId, uint16_t timeout) {
 	return XBEE_WAIT_TIMEOUT ;
 }
 
+void XBeeIO::init(uio::iostream& serial_stream, uint32_t msb, uint32_t lsb, int timeout) {
+	_xbee.setSerial(serial_stream);
+	_address.setMsb(msb);
+	_address.setMsb(lsb);
+	_timeout = timeout;
+	_obuf.setbuf(_omem, XBEE_IOBUFFER_SIZE);
+}
+
+uio::ostream& XBeeIO::flush() {
+	ZBTxRequest tx(_address, (uint8_t *) _obuf.dump(), _obuf.size());
+	ZBTxStatusResponse tx_status;
+	_xbee.send(tx);
+
+	if (_xbee.readPacket(_timeout)) {
+		if (_xbee.getResponse().getApiId() == ZB_TX_STATUS_RESPONSE) {
+			_xbee.getResponse().getZBTxStatusResponse(tx_status);
+			if (tx_status.getDeliveryStatus() != SUCCESS) {
+				_oerror._flags.reserved = 0x2;
+			}
+		} else {
+			_oerror._flags.reserved = 0x3;
+		}
+	} else {
+		_oerror._flags.reserved = 0x1;
+	}
+	return *this;
+}
+
+const char* XBeeIO::tx_errmsg() {
+	if(!_oerror.any()) {
+		return NULL;
+	} else {
+		if(_oerror._flags.overflow) return "TX BUFFER OVERFLOW";
+		else if (_oerror._flags.uninitialized) return "TX BUFFER UNINITIALIZED";
+		else if (_oerror._flags.reserved == 0x1) return "TX ACK TIMEOUT";
+		else if (_oerror._flags.reserved == 0x2) return "TX DELIVERY FAILURE";
+		else if (_oerror._flags.reserved == 0x3) return "TX RESPONSE WAS NOT AN ACK";
+		else return "TX ERROR UNKNOWN";
+	}
+}
+
+void XBeeAT::init(XBeeIO& xbee, int timeout) {
+	_xbee = &xbee.xbee();
+	_timeout = timeout;
+	_ibuf.setbuf(_imem, XBEE_IOBUFFER_SIZE);
+	_obuf.setbuf(_omem, XBEE_IOBUFFER_SIZE);
+}
+
+uio::ostream& XBeeAT::flush() {
+	AtCommandRequest at_request((uint8_t*) _obuf.dump());
+
+	_xbee->send(at_request);
+	return *this;
+}
+
+uio::istream& XBeeAT::sync() {
+	AtCommandResponse at_response;
+	if (_xbee->readPacket(_timeout)) {
+		if (_xbee->getResponse().getApiId() == AT_COMMAND_RESPONSE) {
+			_xbee->getResponse().getAtCommandResponse(at_response);
+
+			if(at_response.isOk()) {
+				if (at_response.getValueLength() > 0) {
+					_ibuf.sputn((char*) at_response.getValue(), at_response.getValueLength());
+				}
+			} else {
+				_oerror._flags.reserved = 0x2;
+			}
+		} else {
+			_oerror._flags.reserved = 0x3;
+		}
+	} else {
+		_oerror._flags.reserved = 0x1;
+	}
+	return *this;
+}
