@@ -1827,7 +1827,13 @@ void XBeeAT::init(XBeeIO& xbee, int timeout) {
 }
 
 uio::ostream& XBeeAT::flush() {
-	AtCommandRequest at_request((uint8_t*) _obuf.dump());
+	AtCommandRequest at_request;
+	if (_obuf.size() > 2) {
+		uint8_t* data = (uint8_t*) _obuf.dump();
+		at_request = AtCommandRequest(data, data + AT_COMMAND_API_LENGTH, _obuf.size() - AT_COMMAND_API_LENGTH);
+	} else {
+		at_request = AtCommandRequest((uint8_t*) _obuf.dump());
+	}
 
 	_xbee->send(at_request);
 	return *this;
